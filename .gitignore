@@ -1,0 +1,9 @@
+node_modules
+dist
+.env
+.env.local
+*.log
+.DS_Store
+
+# Claude Code local machine state (keep launch.json shared, ignore local perms)
+.claude/settings.local.json

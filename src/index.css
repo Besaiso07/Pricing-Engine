@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: #1c2030;
+  color: #e2e8f0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  margin: 0;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #1c2030;
+}
+::-webkit-scrollbar-thumb {
+  background: #2e3555;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #60a5fa;
+}
+
+.rtl { direction: rtl; }
+.ltr { direction: ltr; }
+
+/* ── Print / PDF report ─────────────────────────────────────────── */
+#print-area { display: none; }
+
+@media print {
+  /* kill the dark app theme so no dark page can bleed through */
+  html, body { background: #ffffff !important; }
+  #root { display: none !important; }
+
+  #print-area {
+    display: block !important;          /* normal flow → white bg grows with content */
+    background: #ffffff;
+    color: #0f172a;
+    -webkit-print-color-adjust: exact;  /* print the light accent fills */
+    print-color-adjust: exact;
+  }
+
+  @page { size: A4; margin: 12mm; }
+  .pr-avoid-break { break-inside: avoid; }
+}
+
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button {
+  opacity: 0.4;
+}
