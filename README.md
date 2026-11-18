@@ -4,7 +4,6 @@ A costing and pricing tool for hosting and digital-service providers. It works o
 **really costs in LYD** and recommends a **selling price**, even when vendors bill in USD or EUR and the
 dinar moves.
 
-Built for the Finance team at Libyan Spider (ls.ly).
 
 ## What it does
 
