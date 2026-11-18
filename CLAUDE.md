@@ -46,7 +46,7 @@ See **§8 Data persistence & the #1 rule** and `SUPABASE_SETUP.md`.
 
 ## 3. How to run
 
-From the project root (`/Users/accounting-macmini/Desktop/PRICING ENGINE`):
+From the project root:
 
 ```bash
 npm install      # first time only
