@@ -92,7 +92,7 @@ export default function CostComponents() {
               toast.success(`Imported ${n} component${n === 1 ? '' : 's'}`)
             }}
           />
-          <Button variant="primary" onClick={openAdd}>
+          <Button variant="primary" onClick={openAdd} data-tour="component-add">
             <Plus size={15} /> Add Component
           </Button>
         </div>
@@ -120,7 +120,7 @@ export default function CostComponents() {
       </div>
 
       {/* Table */}
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden" data-tour="components-table">
         <table className="w-full text-sm">
           <thead className="bg-bg/50">
             <tr className="text-xs text-slate-500 border-b border-border">

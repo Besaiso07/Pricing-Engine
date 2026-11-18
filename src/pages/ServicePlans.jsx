@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import useAppStore from '../store/appStore'
 import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
@@ -8,12 +8,13 @@ import Modal, { ConfirmModal } from '../components/ui/Modal'
 import Input, { Select, Textarea } from '../components/ui/Input'
 import ImportButton from '../components/ui/ImportButton'
 import PrintPlanButton from '../components/PrintPlanButton'
-import { fmtLYD, fmtPct, sellingPrice, marginPct, colorClass, statusColor, planCyclePrice } from '../utils/format'
-import { BILLING_CYCLES, getCycle } from '../data/mockData'
-import { Plus, ExternalLink, Trash2, LayoutGrid, List, Server, Download } from 'lucide-react'
+import { fmtLYD, fmtCurrency, fmtPct, sellingPrice, marginPct, colorClass, statusColor, planCyclePrice } from '../utils/format'
+import { BILLING_CYCLES, getCycle, sortCycles, defaultCycle, SELL_CURRENCIES } from '../data/mockData'
+import { Plus, ExternalLink, Trash2, LayoutGrid, List, Server, Download, Pencil } from 'lucide-react'
 import toast from 'react-hot-toast'
 
-const empty = { name: '', category: '', description: '', specs: '{}', markup_override_pct: '', current_price: '', billing_cycles: ['monthly'] }
+const empty = { name: '', category: '', description: '', specs: '{}', markup_override_pct: '', current_price: '', billing_cycles: ['monthly'], status: 'active' }
+const STATUSES = ['active', 'draft', 'archived']
 
 const PLAN_TEMPLATE = `name,category,description,specs,markup_override_pct,current_price,status
 Shared Hosting Starter,shared_hosting,Entry level plan,"{""disk"":""5GB"",""ram"":""1GB""}",35,25,active
@@ -29,12 +30,12 @@ function downloadTemplate(content, filename) {
   URL.revokeObjectURL(url)
 }
 
-function PlanCard({ plan, cost, price, margin, markup, catClass, catLabel }) {
-  const cycles = plan.billing_cycles?.length ? plan.billing_cycles : ['monthly']
-  const primaryCycle = cycles[0]
+function PlanCard({ plan, cost, price, margin, markup, catClass, catLabel, onOpen, onEdit }) {
+  const cycles = sortCycles(plan.billing_cycles)
+  const primaryCycle = defaultCycle(cycles)
   const curPrice = planCyclePrice(plan, primaryCycle)
   return (
-    <Card className="p-4 flex flex-col gap-3">
+    <Card className="p-4 flex flex-col gap-3 cursor-pointer hover:border-primary/50 transition-colors" onClick={onOpen} title="Open plan page">
       <div className="flex items-start justify-between gap-2">
         <div>
           <p className="font-semibold text-slate-100 text-sm">{plan.name}</p>
@@ -73,8 +74,13 @@ function PlanCard({ plan, cost, price, margin, markup, catClass, catLabel }) {
         </div>
       </div>
       <div className="flex items-center justify-between text-xs">
-        <span className="text-slate-500">Margin: <span className={`font-semibold ${margin >= 30 ? 'text-success' : margin >= 15 ? 'text-warning' : 'text-danger'}`}>{fmtPct(margin)}</span></span>
-        <div className="flex gap-2">
+        {plan.isCosted
+          ? <span className="text-slate-500">Margin: <span className={`font-semibold ${margin >= 30 ? 'text-success' : margin >= 15 ? 'text-warning' : 'text-danger'}`}>{fmtPct(margin)}</span></span>
+          : <span className="font-semibold text-danger" title="No cost components or cost centers linked to this plan">Uncosted</span>}
+        <div className="flex gap-2" onClick={e => e.stopPropagation()}>
+          <Button size="sm" variant="ghost" onClick={onEdit} title="Edit plan details">
+            <Pencil size={12} /> Edit
+          </Button>
           <PrintPlanButton planId={plan.id} />
           <Link to={`/plans/${plan.id}`}>
             <Button size="sm" variant="ghost">
@@ -88,12 +94,15 @@ function PlanCard({ plan, cost, price, margin, markup, catClass, catLabel }) {
 }
 
 export default function ServicePlans() {
-  const { plans, addPlan, deletePlan, getPlanTotalCost, getSetting, importPlans, planCategories, getPlanCat } = useAppStore()
+  const { plans, addPlan, updatePlan, deletePlan, getPlanTotalCost, planCycleMargin, planCyclePriceIn, getSetting, importPlans, planCategories, getPlanCat } = useAppStore()
   const [view, setView] = useState('list')
   const [compareMode, setCompareMode] = useState('cycle') // 'cycle' | 'monthly'
   const [rowCycle, setRowCycle] = useState({}) // planId -> cycle key override
   const [form, setForm] = useState(empty)
   const [showModal, setShowModal] = useState(false)
+  const [editingId, setEditingId] = useState(null) // null = creating a new plan
+  const navigate = useNavigate()
+  const openPlan = (plan) => navigate(`/plans/${plan.id}`)
   const [confirmId, setConfirmId] = useState(null)
   const markupDefault = getSetting('default_markup_pct')
 
@@ -101,7 +110,23 @@ export default function ServicePlans() {
   const catClass = (key) => colorClass(getPlanCat(key)?.color)
   const catLabel = (key) => getPlanCat(key)?.label || key
 
-  const openAdd = () => { setForm({ ...empty, category: CATEGORIES[0] || 'other' }); setShowModal(true) }
+  const openAdd = () => { setEditingId(null); setForm({ ...empty, category: CATEGORIES[0] || 'other' }); setShowModal(true) }
+  // Open an existing plan in edit mode, form pre-filled
+  const openEdit = (plan) => {
+    setEditingId(plan.id)
+    setForm({
+      name: plan.name || '',
+      category: plan.category || CATEGORIES[0] || 'other',
+      description: plan.description || '',
+      specs: JSON.stringify(plan.specs || {}, null, 0),
+      markup_override_pct: plan.markup_override_pct ?? '',
+      current_price: '',
+      billing_cycles: sortCycles(plan.billing_cycles),
+      status: plan.status || 'active',
+    })
+    setShowModal(true)
+  }
+  const closeModal = () => { setShowModal(false); setEditingId(null) }
   const toggleCycle = (key) => setForm(f => ({
     ...f,
     billing_cycles: f.billing_cycles.includes(key)
@@ -110,12 +135,12 @@ export default function ServicePlans() {
   }))
 
   const planData = plans.map(p => {
-    const { totalLYD, unitLYD, isPerClient, clientCapacity } = getPlanTotalCost(p.id)
+    const { totalLYD, unitLYD, isPerClient, isCosted, clientCapacity } = getPlanTotalCost(p.id)
     const markup = p.markup_override_pct ?? markupDefault
     // price & margin are per client (unitLYD) so they compare correctly to the per-client price
     const price = sellingPrice(unitLYD, markup)
     const margin = marginPct(unitLYD, price)
-    return { ...p, totalLYD, unitLYD, isPerClient, clientCapacity, price, margin, markup }
+    return { ...p, totalLYD, unitLYD, isPerClient, isCosted, clientCapacity, price, margin, markup }
   })
 
   const grouped = CATEGORIES.reduce((acc, cat) => {
@@ -125,21 +150,43 @@ export default function ServicePlans() {
 
   // Compute a plan's figures in the cycle being viewed for the list
   const rowFigures = (p) => {
-    const cycles = p.billing_cycles?.length ? p.billing_cycles : ['monthly']
-    const selected = compareMode === 'monthly' ? 'monthly' : (rowCycle[p.id] || cycles[0])
+    const cycles = sortCycles(p.billing_cycles)
+    const selected = compareMode === 'monthly' ? 'monthly' : (rowCycle[p.id] || defaultCycle(cycles))
     const months = getCycle(selected).months
     const breakEven = p.unitLYD * months
     const suggested = p.price * months
     const current = planCyclePrice(p, selected)
-    const actualMargin = current != null ? marginPct(breakEven, current) : null
+    // null when uncosted — never show a fake 100% margin
+    const actualMargin = planCycleMargin(p, selected)
     return { cycles, selected, months, breakEven, suggested, current, actualMargin }
   }
 
   const save = () => {
     if (!form.name.trim()) return toast.error('Name required')
     let specs = {}
-    try { specs = JSON.parse(form.specs || '{}') } catch { specs = {} }
+    try { specs = JSON.parse(form.specs || '{}') } catch { return toast.error('Specs must be valid JSON, e.g. {"disk":"10GB"}') }
     if (!form.billing_cycles?.length) return toast.error('Select at least one billing cycle')
+
+    if (editingId) {
+      const old = plans.find(p => p.id === editingId)
+      const next = {
+        name: form.name.trim(),
+        category: form.category,
+        description: form.description,
+        specs,
+        markup_override_pct: form.markup_override_pct === '' || form.markup_override_pct == null ? null : parseFloat(form.markup_override_pct),
+        billing_cycles: form.billing_cycles,
+        status: form.status,
+      }
+      // only send what actually changed, so the activity log stays meaningful
+      const patch = Object.fromEntries(Object.entries(next).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(old?.[k] ?? null)))
+      if (Object.keys(patch).length === 0) { toast('No changes'); closeModal(); return }
+      updatePlan(editingId, patch)
+      toast.success('Plan updated')
+      closeModal()
+      return
+    }
+
     addPlan({
       ...form,
       specs,
@@ -148,7 +195,7 @@ export default function ServicePlans() {
       billing_cycles: form.billing_cycles,
     })
     toast.success('Plan created')
-    setShowModal(false)
+    closeModal()
     setForm(empty)
   }
 
@@ -191,7 +238,7 @@ export default function ServicePlans() {
               toast.success(`Imported ${n} plan${n === 1 ? '' : 's'}`)
             }}
           />
-          <Button variant="primary" onClick={openAdd}>
+          <Button variant="primary" onClick={openAdd} data-tour="plan-new">
             <Plus size={15} /> New Plan
           </Button>
         </div>
@@ -204,7 +251,7 @@ export default function ServicePlans() {
               <h2 className="text-sm font-semibold text-slate-400 mb-3">{catLabel(cat)}</h2>
               <div className="grid grid-cols-3 gap-4">
                 {grouped[cat].map(p => (
-                  <PlanCard key={p.id} plan={p} cost={p.unitLYD} price={p.price} margin={p.margin} markup={p.markup} catClass={catClass} catLabel={catLabel} />
+                  <PlanCard key={p.id} plan={p} cost={p.unitLYD} price={p.price} margin={p.margin} markup={p.markup} catClass={catClass} catLabel={catLabel} onOpen={() => openPlan(p)} onEdit={() => openEdit(p)} />
                 ))}
               </div>
             </div>
@@ -217,7 +264,7 @@ export default function ServicePlans() {
               ? 'All plans normalised to a monthly figure for cost comparison.'
               : 'Each plan is shown in its own billing cycle. Use the cycle dropdown to switch a plan with multiple cycles. Margin shows "actual" when a current price is set for that cycle, otherwise the suggested margin.'}
           </p>
-        <Card className="overflow-hidden">
+        <Card className="overflow-hidden" data-tour="plans-table">
           <table className="w-full text-sm">
             <thead className="bg-bg/50">
               <tr className="text-xs text-slate-500 border-b border-border">
@@ -237,7 +284,7 @@ export default function ServicePlans() {
                 const f = rowFigures(p)
                 const marginVal = f.actualMargin ?? p.margin
                 return (
-                  <tr key={p.id} className="border-b border-border/50 hover:bg-border/20 transition-colors">
+                  <tr key={p.id} onClick={() => openPlan(p)} title="Open plan page" className="border-b border-border/50 hover:bg-primary/5 cursor-pointer transition-colors">
                     <td className="px-4 py-3">
                       <p className="text-slate-200 font-medium">{p.name}</p>
                       <p className="text-xs text-slate-500">{p.description}</p>
@@ -250,6 +297,7 @@ export default function ServicePlans() {
                       ) : f.cycles.length > 1 ? (
                         <select
                           value={f.selected}
+                          onClick={e => e.stopPropagation()}
                           onChange={e => setRowCycle(rc => ({ ...rc, [p.id]: e.target.value }))}
                           className="bg-bg border border-border rounded-md px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-primary"
                         >
@@ -263,17 +311,30 @@ export default function ServicePlans() {
                     <td className="px-4 py-3 text-right font-mono text-success">{fmtLYD(f.suggested)}</td>
                     <td className="px-4 py-3 text-right font-mono text-primary">
                       {f.current != null ? fmtLYD(f.current) : <span className="text-slate-600">—</span>}
+                      {SELL_CURRENCIES.map(c => {
+                        const v = planCyclePriceIn(p, f.selected, c)
+                        return v != null ? <span key={c} className="block text-[11px] text-slate-400">{fmtCurrency(v, c)}</span> : null
+                      })}
                     </td>
                     <td className="px-4 py-3 text-right font-mono">
-                      <span className={marginVal >= 30 ? 'text-success' : marginVal >= 15 ? 'text-warning' : 'text-danger'}>
-                        {fmtPct(marginVal)}
-                      </span>
-                      {f.actualMargin != null && <span className="block text-[10px] text-slate-600">actual</span>}
+                      {p.isCosted ? (
+                        <>
+                          <span className={marginVal >= 30 ? 'text-success' : marginVal >= 15 ? 'text-warning' : 'text-danger'}>
+                            {fmtPct(marginVal)}
+                          </span>
+                          {f.actualMargin != null && <span className="block text-[10px] text-slate-600">actual</span>}
+                        </>
+                      ) : (
+                        <span className="text-danger text-xs font-sans font-semibold" title="No cost components or cost centers linked to this plan">Uncosted</span>
+                      )}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                       <div className="flex gap-2 justify-end">
+                        <button onClick={() => openEdit(p)} title="Edit plan" className="p-1.5 rounded-lg hover:bg-primary/10 text-slate-400 hover:text-primary transition-colors">
+                          <Pencil size={14} />
+                        </button>
                         <PrintPlanButton planId={p.id} iconOnly />
-                        <Link to={`/plans/${p.id}`}><Button size="sm"><ExternalLink size={12} /></Button></Link>
+                        <Link to={`/plans/${p.id}`} title="Costs & prices"><Button size="sm"><ExternalLink size={12} /></Button></Link>
                         <button onClick={() => setConfirmId(p.id)} className="p-1.5 rounded-lg hover:bg-danger/20 text-slate-400 hover:text-danger transition-colors">
                           <Trash2 size={14} />
                         </button>
@@ -292,18 +353,31 @@ export default function ServicePlans() {
         <Card className="p-10 text-center">
           <Server size={32} className="text-slate-600 mx-auto mb-3" />
           <p className="text-slate-400 font-medium">No plans yet</p>
-          <Button variant="primary" className="mt-4 mx-auto" onClick={() => setShowModal(true)}>
+          <Button variant="primary" className="mt-4 mx-auto" onClick={openAdd}>
             <Plus size={15} /> Create First Plan
           </Button>
         </Card>
       )}
 
-      <Modal open={showModal} onClose={() => setShowModal(false)} title="New Service Plan">
+      <Modal open={showModal} onClose={closeModal} title={editingId ? `Edit Plan — ${plans.find(p => p.id === editingId)?.name || ''}` : 'New Service Plan'}>
         <div className="space-y-4">
+          {editingId && (
+            <Link to={`/plans/${editingId}`} onClick={closeModal} className="flex items-center justify-between rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-primary hover:bg-primary/10">
+              <span>Costs, allocations &amp; prices per billing cycle</span>
+              <span className="flex items-center gap-1 font-semibold">Open plan page <ExternalLink size={12} /></span>
+            </Link>
+          )}
           <Input label="Plan Name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Shared Hosting – Starter" />
-          <Select label="Category" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
-            {CATEGORIES.map(c => <option key={c} value={c}>{catLabel(c)}</option>)}
-          </Select>
+          <div className={editingId ? 'grid grid-cols-2 gap-3' : ''}>
+            <Select label="Category" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+              {CATEGORIES.map(c => <option key={c} value={c}>{catLabel(c)}</option>)}
+            </Select>
+            {editingId && (
+              <Select label="Status" value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
+                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+              </Select>
+            )}
+          </div>
 
           {/* Billing cycles this plan is sold in */}
           <div>
@@ -345,13 +419,15 @@ export default function ServicePlans() {
             onChange={e => setForm(f => ({ ...f, markup_override_pct: e.target.value }))}
             placeholder="default"
           />
-          <p className="text-xs text-slate-600">
-            💡 Set the actual selling price for each billing cycle later, in the plan's detail page
-            (“Prices by Billing Cycle”).
-          </p>
+          {!editingId && (
+            <p className="text-xs text-slate-600">
+              💡 Set the actual selling price for each billing cycle later, in the plan's detail page
+              (“Prices by Billing Cycle”).
+            </p>
+          )}
           <div className="flex gap-3 justify-end pt-2">
-            <Button onClick={() => setShowModal(false)}>Cancel</Button>
-            <Button variant="primary" onClick={save}>Create Plan</Button>
+            <Button onClick={closeModal}>Cancel</Button>
+            <Button variant="primary" onClick={save}>{editingId ? 'Save Changes' : 'Create Plan'}</Button>
           </div>
         </div>
       </Modal>

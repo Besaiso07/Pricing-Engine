@@ -18,7 +18,7 @@ export default function Simulator() {
   const {
     plans, getSetting, getSettingRaw, updateSetting,
     components, allocations, costCenters, costCenterPlans, costCenterComponents,
-    fxRate, planCategories, getPlanCat, monthlyComponentCostAtRates,
+    fxRate, planCategories, getPlanCat, monthlyComponentCostAtRates, getPlanTotalCost,
   } = useAppStore()
   const catClass = (key) => colorClass(getPlanCat(key)?.color)
   const catLabel = (key) => getPlanCat(key)?.label || key
@@ -87,11 +87,9 @@ export default function Simulator() {
 
   const rows = plans.map(p => {
     const markup = p.markup_override_pct ?? getSetting('default_markup_pct')
-    // per-client divisor: shared plans are priced per client (total ÷ capacity)
-    const clientCapacity = costCenterPlans
-      .filter(cp => cp.plan_id === p.id)
-      .reduce((s, cp) => s + (cp.max_clients || 0), 0)
-    const divisor = clientCapacity > 0 ? clientCapacity : 1
+    // per-client divisor: same basis as live costing (full client capacity)
+    const { isPerClient, clientCapacity } = getPlanTotalCost(p.id)
+    const divisor = isPerClient && clientCapacity > 0 ? clientCapacity : 1
     // monthly per-client figures
     const baseBEm = breakEvenAt(p.id, baseUsd, baseEur) / divisor
     const simBEm = breakEvenAt(p.id, simUsd, simEur) / divisor

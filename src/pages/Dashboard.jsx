@@ -2,45 +2,64 @@ import { Link } from 'react-router-dom'
 import useAppStore from '../store/appStore'
 import Card from '../components/ui/Card'
 import { fmtLYD, fmtPct, sellingPrice, marginPct, planCyclePrice } from '../utils/format'
+import { getCycle, SELL_CURRENCIES } from '../data/mockData'
+import { useThemeHex, tooltipStyle } from '../utils/theme'
 import { TrendingUp, Server, DollarSign, Percent, Activity, AlertTriangle, ExternalLink } from 'lucide-react'
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend,
 } from 'recharts'
 
-const COLORS = ['#60a5fa', '#fbbf24', '#4ade80', '#a78bfa', '#f87171']
 
 export default function Dashboard() {
-  const { plans, getPlanTotalCost, getSetting, components } = useAppStore()
+  const { plans, getPlanTotalCost, getSetting, getSettingRaw, fxRate, planPriceMargins, planCyclePriceIn, components } = useAppStore()
+  const t = useThemeHex()
+  const COLORS = [t.primary, t.warning, t.success, t.purple, t.danger]
 
   const activePlans = plans.filter(p => p.status === 'active')
   const markupDefault = getSetting('default_markup_pct')
 
   // Compute costs for each plan
   const planData = plans.map(p => {
-    const { totalLYD, unitLYD, isPerClient } = getPlanTotalCost(p.id)
+    const { totalLYD, unitLYD, isPerClient, isCosted, idleCostLYD } = getPlanTotalCost(p.id)
     const markup = p.markup_override_pct ?? markupDefault
     // per-client economics (comparable to the per-client selling price)
     const price = sellingPrice(unitLYD, markup)
-    const margin = marginPct(unitLYD, price)
-    return { ...p, totalLYD, unitLYD, isPerClient, price, margin, markup }
+    const margin = marginPct(unitLYD, price) // suggested margin (what the markup gives)
+    // Margin at the plan's own prices, per cycle sold and currency (LYD/USD/EUR). Worst one drives alerts.
+    const cycles = p.billing_cycles?.length ? p.billing_cycles : ['monthly']
+    const cycleMargins = planPriceMargins(p)
+    const worst = cycleMargins.reduce((w, c) => (w == null || c.margin < w.margin ? c : w), null)
+    const unpricedCycles = cycles.filter(key => ['LYD', ...SELL_CURRENCIES].every(c => planCyclePriceIn(p, key, c) == null))
+    return { ...p, totalLYD, unitLYD, isPerClient, isCosted, idleCostLYD, price, margin, markup, cycleMargins, worst, unpricedCycles }
   })
 
-  const totalExposure = planData.reduce((s, p) => s + p.totalLYD, 0) // company-wide (all clients)
-  const avgMargin = planData.filter(p => p.margin > 0).reduce((s, p, _, a) => s + p.margin / a.length, 0)
+  const livePlans = planData.filter(p => p.status !== 'archived')
+  const totalExposure = livePlans.reduce((s, p) => s + p.totalLYD, 0) // company-wide (all clients)
+  const idleCost = livePlans.reduce((s, p) => s + p.idleCostLYD, 0)
+  const uncostedCount = livePlans.filter(p => !p.isCosted).length
 
-  // ── Repricing alerts (per-client basis) ──────────────────────────
+  // Avg margin at CURRENT prices: active, costed plans with a price (worst cycle each).
+  const priced = planData.filter(p => p.status === 'active' && p.worst)
+  const avgMargin = priced.length ? priced.reduce((s, p) => s + p.worst.margin, 0) / priced.length : null
+
+  // ── Repricing alerts (per-client basis, every cycle sold) ──────────
   const targetMargin = getSetting('target_margin_pct')
   const alerts = []
-  planData.forEach(p => {
-    if (p.status === 'archived') return
-    const monthlyPrice = planCyclePrice(p, 'monthly')
-    if (p.unitLYD > 0 && monthlyPrice == null) {
-      alerts.push({ plan: p, type: 'no-price', label: 'No selling price set', sev: 'warn' })
-    } else if (monthlyPrice != null) {
-      const actualMargin = marginPct(p.unitLYD, monthlyPrice)
-      if (actualMargin < 0) alerts.push({ plan: p, type: 'loss', label: `Loss-making (${fmtPct(actualMargin)})`, sev: 'danger', actualMargin })
-      else if (actualMargin < targetMargin) alerts.push({ plan: p, type: 'below', label: `Below target (${fmtPct(actualMargin)})`, sev: 'warn', actualMargin })
+  livePlans.forEach(p => {
+    if (!p.isCosted) {
+      alerts.push({ plan: p, type: 'uncosted', label: 'Uncosted — no costs linked', sev: 'danger', actualMargin: -1e9 })
+      return
+    }
+    if (p.worst) {
+      const { margin: m, key, currency } = p.worst
+      const cyc = getCycle(key).label + (currency !== 'LYD' ? ` ${currency}` : '')
+      if (m < 0) alerts.push({ plan: p, type: 'loss', label: `Loss-making ${cyc} (${fmtPct(m)})`, sev: 'danger', actualMargin: m })
+      else if (m < targetMargin) alerts.push({ plan: p, type: 'below', label: `Below target ${cyc} (${fmtPct(m)})`, sev: 'warn', actualMargin: m })
+    }
+    if (p.unpricedCycles.length) {
+      const names = p.unpricedCycles.map(k => getCycle(k).label).join(', ')
+      alerts.push({ plan: p, type: 'no-price', label: `No price set: ${names}`, sev: 'warn' })
     }
   })
   alerts.sort((a, b) => (a.actualMargin ?? 999) - (b.actualMargin ?? 999))
@@ -53,26 +72,30 @@ export default function Dashboard() {
   })
   const pieData = Object.entries(catMap).map(([name, value]) => ({ name, value }))
 
-  // Margin range buckets
-  const buckets = { '0-20%': 0, '20-40%': 0, '40-60%': 0, '60%+': 0 }
-  planData.forEach(p => {
-    if (p.margin < 20) buckets['0-20%']++
-    else if (p.margin < 40) buckets['20-40%']++
-    else if (p.margin < 60) buckets['40-60%']++
+  // Margin range buckets — margin at current prices (worst cycle), costed + priced plans only
+  const buckets = { '<0%': 0, '0-20%': 0, '20-40%': 0, '40-60%': 0, '60%+': 0 }
+  livePlans.filter(p => p.worst).forEach(p => {
+    const m = p.worst.margin
+    if (m < 0) buckets['<0%']++
+    else if (m < 20) buckets['0-20%']++
+    else if (m < 40) buckets['20-40%']++
+    else if (m < 60) buckets['40-60%']++
     else buckets['60%+']++
   })
   const barData = Object.entries(buckets).map(([range, count]) => ({ range, count }))
 
-  const top5 = [...planData].sort((a, b) => b.totalLYD - a.totalLYD).slice(0, 5)
+  const top5 = [...livePlans].filter(p => p.isCosted).sort((a, b) => b.totalLYD - a.totalLYD).slice(0, 5)
 
-  const usdRate = getSetting('usd_to_lyd')
-  const eurRate = getSetting('eur_to_lyd')
+  // Show the rates actually used for costing (official or parallel per fx_mode)
+  const fxMode = getSettingRaw('fx_mode') || 'official'
+  const usdRate = fxRate('USD')
+  const eurRate = fxRate('EUR')
 
   const kpis = [
-    { label: 'Active Plans', value: activePlans.length, icon: Server, color: 'text-primary' },
-    { label: 'Monthly Cost Exposure', value: fmtLYD(totalExposure), icon: DollarSign, color: 'text-warning' },
-    { label: 'Avg Gross Margin', value: fmtPct(avgMargin), icon: Percent, color: 'text-success' },
-    { label: 'Total Plans', value: plans.length, icon: Activity, color: 'text-purple' },
+    { label: 'Active Plans', value: activePlans.length, sub: `${plans.length} total`, icon: Server, color: 'text-primary' },
+    { label: 'Monthly Cost Exposure', value: fmtLYD(totalExposure), sub: uncostedCount ? `${uncostedCount} plan${uncostedCount === 1 ? '' : 's'} uncosted — not included` : 'active + draft plans', icon: DollarSign, color: 'text-warning' },
+    { label: 'Avg Margin at Current Prices', value: avgMargin == null ? '—' : fmtPct(avgMargin), sub: avgMargin == null ? 'no costed plan has a price yet' : `${priced.length} active plan${priced.length === 1 ? '' : 's'}, worst cycle each`, icon: Percent, color: 'text-success' },
+    { label: 'Idle-Capacity Cost / mo', value: fmtLYD(idleCost), sub: 'pool cost today\'s clients don\'t cover', icon: Activity, color: 'text-danger' },
   ]
 
   return (
@@ -85,6 +108,11 @@ export default function Dashboard() {
         </div>
         {/* Currency rates bar */}
         <div className="flex gap-4 bg-card border border-border rounded-xl px-4 py-2">
+          <div className="text-center">
+            <p className="text-xs text-slate-500">Costing at</p>
+            <p className="text-sm font-bold text-slate-300 capitalize">{fxMode}</p>
+          </div>
+          <div className="w-px bg-border" />
           <div className="text-center">
             <p className="text-xs text-slate-500">USD/LYD</p>
             <p className="text-sm font-bold text-primary">{usdRate.toFixed(3)}</p>
@@ -99,14 +127,15 @@ export default function Dashboard() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-4 gap-4">
-        {kpis.map(({ label, value, icon: Icon, color }) => (
+        {kpis.map(({ label, value, sub, icon: Icon, color }) => (
           <Card key={label} className="p-5 flex items-center gap-4">
             <div className={`p-3 rounded-xl bg-border/50 ${color}`}>
               <Icon size={20} />
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-xs text-slate-500">{label}</p>
               <p className="text-lg font-bold text-slate-100">{value}</p>
+              {sub && <p className="text-[11px] text-slate-500 truncate" title={sub}>{sub}</p>}
             </div>
           </Card>
         ))}
@@ -123,9 +152,9 @@ export default function Dashboard() {
             <Link to="/simulator"><span className="text-xs text-primary hover:underline">Open FX Simulator →</span></Link>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            {alerts.slice(0, 8).map(({ plan, label, sev }) => (
+            {alerts.slice(0, 8).map(({ plan, label, sev, type }) => (
               <Link
-                key={plan.id}
+                key={`${plan.id}-${type}`}
                 to={`/plans/${plan.id}`}
                 className={`flex items-center justify-between rounded-lg px-3 py-2 border transition-colors hover:bg-border/30 ${
                   sev === 'danger' ? 'border-danger/30 bg-danger/5' : 'border-warning/30 bg-warning/5'
@@ -149,21 +178,22 @@ export default function Dashboard() {
               <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={75} innerRadius={40} paddingAngle={3}>
                 {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
               </Pie>
-              <Tooltip contentStyle={{ background: '#252a3d', border: '1px solid #2e3555', borderRadius: 8, fontSize: 12 }} />
-              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12, color: '#94a3b8' }} />
+              <Tooltip contentStyle={tooltipStyle(t)} />
+              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12, color: t.axis }} />
             </PieChart>
           </ResponsiveContainer>
         </Card>
 
         <Card className="p-5">
-          <h2 className="text-sm font-semibold text-slate-300 mb-4">Plans by Margin Range</h2>
+          <h2 className="text-sm font-semibold text-slate-300 mb-1">Plans by Margin Range</h2>
+          <p className="text-xs text-slate-500 mb-3">Margin at your current prices (worst billing cycle). Uncosted or unpriced plans excluded.</p>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={barData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2e3555" />
-              <XAxis dataKey="range" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-              <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} allowDecimals={false} />
-              <Tooltip contentStyle={{ background: '#252a3d', border: '1px solid #2e3555', borderRadius: 8, fontSize: 12 }} />
-              <Bar dataKey="count" fill="#60a5fa" radius={[4, 4, 0, 0]} />
+              <CartesianGrid strokeDasharray="3 3" stroke={t.border} />
+              <XAxis dataKey="range" tick={{ fill: t.axis, fontSize: 11 }} />
+              <YAxis tick={{ fill: t.axis, fontSize: 11 }} allowDecimals={false} />
+              <Tooltip contentStyle={tooltipStyle(t)} />
+              <Bar dataKey="count" fill={t.primary} radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </Card>
@@ -172,7 +202,7 @@ export default function Dashboard() {
       {/* Top 5 highest-cost plans */}
       <Card className="p-5">
         <h2 className="text-sm font-semibold text-slate-300 mb-1">Top 5 Highest-Cost Plans</h2>
-        <p className="text-xs text-slate-500 mb-4">Total = whole plan (all clients). Break-even/sell/margin are per client.</p>
+        <p className="text-xs text-slate-500 mb-4">Total = whole plan (all clients). Break-even/suggested price/margin are per client (÷ full capacity).</p>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-slate-500 border-b border-border">
@@ -180,8 +210,8 @@ export default function Dashboard() {
               <th className="text-left pb-2 font-medium">Category</th>
               <th className="text-right pb-2 font-medium">Total Cost / mo</th>
               <th className="text-right pb-2 font-medium">Break-Even / client</th>
-              <th className="text-right pb-2 font-medium">Sell / client</th>
-              <th className="text-right pb-2 font-medium">Margin</th>
+              <th className="text-right pb-2 font-medium">Suggested / client</th>
+              <th className="text-right pb-2 font-medium">Suggested Margin</th>
             </tr>
           </thead>
           <tbody>

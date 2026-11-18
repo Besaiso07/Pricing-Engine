@@ -10,25 +10,69 @@ import {
   fmtLYD, fmtCurrency, fmtPct, sellingPrice, marginPct,
   colorClass, statusColor, planCyclePrice,
 } from '../utils/format'
-import { BILLING_CYCLES, getCycle } from '../data/mockData'
+import { BILLING_CYCLES, getCycle, sortCycles, defaultCycle, SELL_CURRENCIES } from '../data/mockData'
 import PrintPlanButton from '../components/PrintPlanButton'
+import CostFormula from '../components/CostFormula'
+import PlanHistory from '../components/PlanHistory'
 
 const cycleShort = {
   monthly: '/ mo', quarterly: '/ qtr', semi_annually: '/ 6mo',
   annually: '/ yr', biennially: '/ 2yr', triennially: '/ 3yr',
 }
 
-// Editable row: manual selling price for one billing cycle
+const marginClass = (m) => m >= 30 ? 'text-success' : m >= 15 ? 'text-warning' : 'text-danger'
+
+// One manual price input (LYD, USD or EUR) for a billing cycle, with its margin.
+function PriceInput({ plan, cycleKey, currency, breakEvenLYD, suggestedLYD, onSave }) {
+  const { planCyclePriceIn, planCycleMarginIn, fromLYD, priceToLYD } = useAppStore()
+  const isLYD = currency === 'LYD'
+  const stored = planCyclePriceIn(plan, cycleKey, currency)
+  const [val, setVal] = useState(stored ?? '')
+  useEffect(() => { setVal(stored ?? '') }, [stored])
+  const dirty = String(val) !== String(stored ?? '')
+  const margin = planCycleMarginIn(plan, cycleKey, currency)
+  const fmt = (n) => isLYD ? fmtLYD(n) : fmtCurrency(n, currency)
+  const suggested = fromLYD(suggestedLYD, currency)
+  const breakEven = fromLYD(breakEvenLYD, currency)
+
+  return (
+    <div className={isLYD ? '' : 'pt-2 mt-2 border-t border-border/60'}>
+      <div className="flex gap-1.5 items-center">
+        <span className={`w-9 text-[11px] font-semibold ${isLYD ? 'text-primary' : 'text-slate-400'}`}>{currency}</span>
+        <input
+          type="number"
+          step={isLYD ? '0.001' : '0.01'}
+          min="0"
+          className={`flex-1 min-w-0 bg-card border border-border rounded-lg px-2.5 py-1.5 font-mono focus:outline-none focus:border-primary ${isLYD ? 'text-sm text-primary' : 'text-xs text-slate-200'}`}
+          value={val}
+          placeholder={`suggested ${suggested.toFixed(isLYD ? 3 : 2)}`}
+          onChange={e => setVal(e.target.value)}
+        />
+        <Button size="sm" variant={dirty ? 'primary' : 'ghost'} onClick={() => onSave(cycleKey, val, currency)}>Set</Button>
+        {stored != null && (
+          <Button size="sm" onClick={() => onSave(cycleKey, '', currency)} title="Clear">✕</Button>
+        )}
+      </div>
+      <div className="flex items-center justify-between mt-1 text-[11px] pl-10 gap-2 flex-wrap">
+        <span className="text-slate-500">
+          {!isLYD && <>Break-even <span className="font-mono text-warning">{fmt(breakEven)}</span> · </>}
+          Suggested <span className="font-mono text-success">{fmt(suggested)}</span>
+          {!isLYD && stored != null && <> · ≈ <span className="font-mono">{fmtLYD(priceToLYD(stored, currency))}</span></>}
+        </span>
+        {margin != null && (
+          <span className="text-slate-500">Margin: <span className={`font-mono font-semibold ${marginClass(margin)}`}>{fmtPct(margin)}</span></span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Editable block: manual selling prices for one billing cycle, in LYD and each selling currency
 function CyclePriceRow({ plan, cycleKey, breakEvenMonthly, markup, onSave, active }) {
+  const fxRate = useAppStore(s => s.fxRate)
   const cyc = getCycle(cycleKey)
   const breakEven = breakEvenMonthly * cyc.months
   const suggested = sellingPrice(breakEvenMonthly, markup) * cyc.months
-  const stored = planCyclePrice(plan, cycleKey)
-  const [val, setVal] = useState(stored ?? '')
-  useEffect(() => { setVal(stored ?? '') }, [stored])
-
-  const margin = stored != null ? marginPct(breakEven, stored) : null
-  const dirty = String(val) !== String(stored ?? '')
 
   return (
     <div className={`rounded-xl p-3 border ${active ? 'border-primary/40 bg-primary/5' : 'border-border bg-bg'}`}>
@@ -36,31 +80,13 @@ function CyclePriceRow({ plan, cycleKey, breakEvenMonthly, markup, onSave, activ
         <span className="text-xs font-semibold text-slate-200">{cyc.label}</span>
         <span className="text-[10px] text-slate-500">×{cyc.months} mo · break-even {fmtLYD(breakEven)}</span>
       </div>
-      <div className="flex items-center gap-2">
-        <div className="flex-1">
-          <div className="flex gap-1.5">
-            <input
-              type="number"
-              step="0.001"
-              min="0"
-              className="flex-1 bg-card border border-border rounded-lg px-2.5 py-1.5 text-sm font-mono text-primary focus:outline-none focus:border-primary"
-              value={val}
-              placeholder={`suggested ${suggested.toFixed(3)}`}
-              onChange={e => setVal(e.target.value)}
-            />
-            <Button size="sm" variant={dirty ? 'primary' : 'ghost'} onClick={() => onSave(cycleKey, val)}>Set</Button>
-            {stored != null && (
-              <Button size="sm" onClick={() => onSave(cycleKey, '')} title="Clear">✕</Button>
-            )}
-          </div>
-        </div>
-      </div>
-      <div className="flex items-center justify-between mt-1.5 text-[11px]">
-        <span className="text-slate-500">Suggested: <span className="font-mono text-success">{fmtLYD(suggested)}</span></span>
-        {margin != null && (
-          <span className="text-slate-500">Margin: <span className={`font-mono font-semibold ${margin >= 30 ? 'text-success' : margin >= 15 ? 'text-warning' : 'text-danger'}`}>{fmtPct(margin)}</span></span>
-        )}
-      </div>
+      {['LYD', ...SELL_CURRENCIES].map(cur => (
+        <PriceInput key={cur} plan={plan} cycleKey={cycleKey} currency={cur}
+          breakEvenLYD={breakEven} suggestedLYD={suggested} onSave={onSave} />
+      ))}
+      <p className="text-[10px] text-slate-600 mt-2">
+        USD/EUR converted at the costing rate: {SELL_CURRENCIES.map(c => `${c} ${fxRate(c).toFixed(3)}`).join(' · ')}
+      </p>
     </div>
   )
 }
@@ -77,7 +103,8 @@ export default function PlanDetail() {
     plans, updatePlan, components, allocations,
     addAllocation, removeAllocation, updateAllocation,
     getPlanTotalCost, getSetting, costCenters, costCenterPlans,
-    getCostCenterPlanCost, getPlanCat, getComponentCat, setPlanCyclePrice,
+    getCostCenterPlanCost, getPlanCat, getComponentCat, setPlanCyclePrice, setPlanCyclePriceFx,
+    planCyclePriceIn, planCycleMarginIn, fromLYD, priceToLYD,
   } = useAppStore()
   const compCatClass = (key) => colorClass(getComponentCat(key)?.color)
   const compCatLabel = (key) => getComponentCat(key)?.label || key
@@ -87,7 +114,7 @@ export default function PlanDetail() {
   const [directForm, setDirectForm] = useState({ component_id: '', allocation_weight: '', allocation_notes: '' })
   const [markupEdit, setMarkupEdit] = useState(plan?.markup_override_pct ?? '')
   const [showCalc, setShowCalc] = useState(true)
-  const [period, setPeriod] = useState('monthly') // a billing-cycle key
+  const [period, setPeriod] = useState(null) // a billing-cycle key; null = plan's default cycle
   const [basis, setBasis] = useState('capacity')  // 'capacity' | 'actual' | 'whole'
 
   if (!plan) return (
@@ -101,12 +128,15 @@ export default function PlanDetail() {
   const effectiveMarkup = plan.markup_override_pct ?? markupDefault
   const {
     totalLYD, unitLYD, clientCapacity, clientActual, perClientCapacity, perClientActual,
+    idleCostLYD, isCosted,
     isPerClient, directBreakdown, ccContributions, directTotal, ccTotal,
   } = getPlanTotalCost(plan.id)
 
   // Cost basis: shared plans are priced per client (total ÷ clients).
   const effBasis = isPerClient ? basis : 'whole'
-  const divisor = effBasis === 'whole' ? 1 : effBasis === 'actual' ? (clientActual || 1) : (clientCapacity || 1)
+  const divisor = effBasis === 'whole' ? 1
+    : effBasis === 'actual' ? (clientActual || 1)
+    : (clientCapacity || 1)
   const beMonthly = totalLYD / divisor              // break-even on the chosen basis (per client or whole)
   const price = sellingPrice(beMonthly, effectiveMarkup)
   const margin = marginPct(beMonthly, price)
@@ -134,16 +164,18 @@ export default function PlanDetail() {
     toast.success('Markup updated')
   }
 
-  const savePrice = (cycleKey, val) => {
-    setPlanCyclePrice(id, cycleKey, val)
-    toast.success(val === '' ? 'Price cleared' : `${getCycle(cycleKey).label} price set`)
+  const savePrice = (cycleKey, val, currency = 'LYD') => {
+    if (currency === 'LYD') setPlanCyclePrice(id, cycleKey, val)
+    else setPlanCyclePriceFx(id, cycleKey, currency, val)
+    toast.success(val === '' ? `${currency} price cleared` : `${getCycle(cycleKey).label} ${currency} price set`)
   }
 
   // ── Period view (per the plan's billing cycles) ──────────────────
   // All costs are computed as monthly equivalents (yearly comps ÷ 12).
   // The selected billing cycle multiplies everything by its # of months.
-  const planCycles = plan.billing_cycles?.length ? plan.billing_cycles : ['monthly']
-  const activePeriod = planCycles.includes(period) ? period : planCycles[0]
+  // Cycles in standard order; open on monthly, else annually, else the shortest cycle sold.
+  const planCycles = sortCycles(plan.billing_cycles)
+  const activePeriod = period && planCycles.includes(period) ? period : defaultCycle(planCycles)
   const cyc = getCycle(activePeriod)
   const mult = cyc.months
   const isMulti = mult > 1
@@ -156,12 +188,18 @@ export default function PlanDetail() {
   const cyclePrice = planCyclePrice(plan, activePeriod)        // price for active cycle (per client)
   const cycleBreakEven = beMonthly * mult                       // break-even for active cycle (per basis)
   const cycleSuggested = view(price)                            // suggested price for active cycle
-  const actualMargin = cyclePrice != null ? marginPct(cycleBreakEven, cyclePrice) : null
+  const actualMargin = cyclePrice != null && isCosted ? marginPct(cycleBreakEven, cyclePrice) : null
   // Annualised revenue for the active cycle's price (12 / months in cycle)
   const annualRevenue = cyclePrice != null ? cyclePrice * (12 / mult) : cycleSuggested * (12 / mult)
 
   return (
     <div className="p-6 space-y-5">
+      {!isCosted && (
+        <div className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">
+          <b>Uncosted plan.</b> No cost components or cost centers are linked, so break-even is 0.000 LYD and no
+          margin or price recommendation is meaningful. Add direct costs below or link the plan to a cost center.
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-start gap-4">
         <Link to="/plans"><button className="p-2 rounded-xl border border-border text-slate-400 hover:text-slate-200 hover:bg-border/50 transition-colors mt-0.5"><ArrowLeft size={16} /></button></Link>
@@ -213,7 +251,7 @@ export default function PlanDetail() {
         <div className="col-span-2 space-y-4">
 
           {/* Direct Allocations */}
-          <Card className="p-5">
+          <Card className="p-5" data-tour="plan-direct">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
                 <Package size={15} className="text-primary" /> Direct Cost Allocations
@@ -422,15 +460,10 @@ export default function PlanDetail() {
                           <span className="text-slate-600">=</span>
                           <span className="font-mono text-warning">{fmtLYD(view(allocatedLYD))}</span>
                         </div>
-                        {c.billing_cycle === 'yearly' && (
-                          <div className="text-[11px] text-purple pl-1">
-                            ↳ {fmtCurrency(c.cost_amount, c.currency)}/yr ÷ 12 = {fmtLYD(monthlyCostLYD)} / mo
-                            {isMulti && ` × ${mult} = ${fmtLYD(monthlyCostLYD * mult)} (${cyc.label})`}
-                          </div>
-                        )}
-                        {c.billing_cycle === 'one_time' && (
-                          <div className="text-[11px] text-purple pl-1">
-                            ↳ {fmtCurrency(c.cost_amount, c.currency)} once ÷ {c.amortize_months || 24} mo = {fmtLYD(monthlyCostLYD)} / mo (amortized)
+                        <CostFormula component={c} />
+                        {isMulti && (
+                          <div className="text-[11px] text-slate-600 font-mono pl-1">
+                            ↳ {fmtLYD(monthlyCostLYD)} / mo × {mult} = {fmtLYD(monthlyCostLYD * mult)} ({cyc.label})
                           </div>
                         )}
                       </div>
@@ -450,21 +483,24 @@ export default function PlanDetail() {
                       Weight = {planClients} / {totalClients} = <span className="text-primary font-mono">{fmtPct(weight * 100)}</span>
                     </p>
                     {breakdown.map(({ component: c, type, monthlyCostLYD, allocatedLYD, weight: w }) => (
-                      <div key={c.id} className="flex items-center gap-1.5 text-xs text-slate-400 flex-wrap">
-                        <span className="text-slate-300 font-medium">{c.name}</span>
-                        <span className="text-slate-600">·</span>
-                        <span className="font-mono">{fmtLYD(view(monthlyCostLYD))}</span>
-                        {type === 'shared' ? (
-                          <>
-                            <span className="text-slate-600">×</span>
-                            <span className="font-mono text-primary">{fmtPct(w * 100)}</span>
-                            <span className="text-xs text-slate-600">(capacity weight)</span>
-                          </>
-                        ) : (
-                          <span className="text-xs text-purple">(dedicated 100%)</span>
-                        )}
-                        <span className="text-slate-600">=</span>
-                        <span className="font-mono text-warning">{fmtLYD(view(allocatedLYD))}</span>
+                      <div key={c.id} className="space-y-0.5">
+                        <div className="flex items-center gap-1.5 text-xs text-slate-400 flex-wrap">
+                          <span className="text-slate-300 font-medium">{c.name}</span>
+                          <span className="text-slate-600">·</span>
+                          <span className="font-mono">{fmtLYD(view(monthlyCostLYD))} {per.replace(' ', '')}</span>
+                          {type === 'shared' ? (
+                            <>
+                              <span className="text-slate-600">×</span>
+                              <span className="font-mono text-primary">{fmtPct(w * 100)}</span>
+                              <span className="text-xs text-slate-600">(capacity weight)</span>
+                            </>
+                          ) : (
+                            <span className="text-xs text-purple">(dedicated 100%)</span>
+                          )}
+                          <span className="text-slate-600">=</span>
+                          <span className="font-mono text-warning">{fmtLYD(view(allocatedLYD))}</span>
+                        </div>
+                        <CostFormula component={c} />
                       </div>
                     ))}
                     <div className="border-t border-border pt-1.5 flex justify-between text-xs font-semibold">
@@ -491,10 +527,18 @@ export default function PlanDetail() {
                     <span className="text-slate-200">Total Break-Even {per} (all clients)</span>
                     <span className="font-mono text-warning">{fmtLYD(view(totalLYD))}</span>
                   </div>
+                  {isMulti && (
+                    <div className="flex justify-between text-slate-500">
+                      <span>= per month (÷ {mult})</span>
+                      <span className="font-mono">{fmtLYD(totalLYD)} / mo</span>
+                    </div>
+                  )}
                   {effBasis !== 'whole' && (
                     <div className="flex justify-between text-primary pt-0.5">
-                      <span>÷ {divisor} clients ({effBasis})</span>
-                      <span className="font-mono font-semibold">{fmtLYD(view(beMonthly))} / client</span>
+                      <span>÷ {+divisor.toFixed(1)} clients ({effBasis})</span>
+                      <span className="font-mono font-semibold">
+                        {fmtLYD(view(beMonthly))} / client{isMulti ? ` (${fmtLYD(beMonthly)} / mo)` : ''}
+                      </span>
                     </div>
                   )}
                   <div className="flex justify-between text-slate-400 pt-0.5">
@@ -515,11 +559,14 @@ export default function PlanDetail() {
               </div>
             )}
           </Card>
+
+          {/* Change history: prices, vendor costs, capacity, rates — before → after */}
+          <PlanHistory planId={plan.id} isPerClient={isPerClient} />
         </div>
 
         {/* Right: Summary panel */}
         <div className="space-y-4">
-          <Card className="p-5 space-y-4">
+          <Card className="p-5 space-y-4" data-tour="plan-summary">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-200">Pricing Summary</h2>
               <span className={`text-xs px-2 py-0.5 rounded-full border ${isMulti ? 'text-purple bg-purple/10 border-purple/30' : 'text-primary bg-primary/10 border-primary/30'}`}>
@@ -534,7 +581,7 @@ export default function PlanDetail() {
                 <div className="flex rounded-lg border border-border overflow-hidden text-xs">
                   {[
                     { k: 'capacity', label: `Per client (cap. ${clientCapacity})` },
-                    { k: 'actual', label: `Per client (now ${clientActual})` },
+                    { k: 'actual', label: `Now (${clientActual})` },
                     { k: 'whole', label: 'Whole plan' },
                   ].map(o => (
                     <button
@@ -547,6 +594,11 @@ export default function PlanDetail() {
                     </button>
                   ))}
                 </div>
+                {idleCostLYD > 0 && (
+                  <p className="text-[11px] text-danger">
+                    Idle-capacity cost: <span className="font-mono">{fmtLYD(idleCostLYD)}</span> / mo not covered by today's {clientActual} client{clientActual === 1 ? '' : 's'}.
+                  </p>
+                )}
               </div>
             )}
 
@@ -597,6 +649,9 @@ export default function PlanDetail() {
                   <p className="text-xs text-slate-500">Suggested Sell Price {per}</p>
                 </div>
                 <p className="text-xl font-bold font-mono text-success">{fmtLYD(view(price))}</p>
+                <p className="text-xs font-mono text-slate-500 mt-0.5">
+                  {SELL_CURRENCIES.map(c => fmtCurrency(fromLYD(view(price), c), c)).join(' · ')}
+                </p>
               </div>
 
               {/* Current Price for the active cycle (read-out; edit per-cycle below) */}
@@ -618,6 +673,18 @@ export default function PlanDetail() {
                 ) : (
                   <p className="text-sm text-slate-600 italic">Not set — add it in “Prices by Cycle” below</p>
                 )}
+                {/* Own USD / EUR prices for this cycle, with their margins */}
+                {SELL_CURRENCIES.map(c => {
+                  const p = planCyclePriceIn(plan, activePeriod, c)
+                  if (p == null) return null
+                  const m = planCycleMarginIn(plan, activePeriod, c)
+                  return (
+                    <div key={c} className="flex items-center justify-between mt-1.5 text-xs">
+                      <span className="font-mono text-slate-300">{fmtCurrency(p, c)} <span className="text-slate-600">≈ {fmtLYD(priceToLYD(p, c))}</span></span>
+                      {m != null && <span className={`font-mono font-semibold ${m >= 30 ? 'text-success' : m >= 15 ? 'text-warning' : 'text-danger'}`}>{fmtPct(m)}</span>}
+                    </div>
+                  )
+                })}
               </div>
 
               <div className="grid grid-cols-2 gap-2">
@@ -649,7 +716,7 @@ export default function PlanDetail() {
           </Card>
 
           {/* Prices by billing cycle — each cycle has its own manual price */}
-          <Card className="p-4 space-y-3">
+          <Card className="p-4 space-y-3" data-tour="plan-prices">
             <div>
               <p className="text-xs font-semibold text-slate-400 flex items-center gap-1.5">
                 <DollarSign size={12} className="text-primary" /> Prices by Billing Cycle

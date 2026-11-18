@@ -2,13 +2,57 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme colors ("R G B" triplets, used by tailwind.config.js) ─────
+   Bright theme is the default; `.dark` on <html> restores the dark theme.
+   Hex equivalents for charts live in src/utils/theme.js — keep them in sync. */
+:root {
+  --c-bg: 244 247 252;        /* #f4f7fc page */
+  --c-card: 255 255 255;      /* #ffffff cards */
+  --c-border: 223 229 239;    /* #dfe5ef */
+  --c-primary: 37 99 235;     /* #2563eb blue */
+  --c-success: 22 163 74;     /* #16a34a green */
+  --c-warning: 217 119 6;     /* #d97706 amber */
+  --c-danger: 220 38 38;      /* #dc2626 red */
+  --c-purple: 124 58 237;     /* #7c3aed violet */
+  --c-muted: 100 116 139;     /* #64748b */
+  /* text: 100 strongest → 700 faintest */
+  --c-slate-100: 15 23 42;
+  --c-slate-200: 30 41 59;
+  --c-slate-300: 51 65 85;
+  --c-slate-400: 71 85 105;
+  --c-slate-500: 100 116 139;
+  --c-slate-600: 148 163 184;
+  --c-slate-700: 203 213 225;
+  color-scheme: light;
+}
+
+:root.dark {
+  --c-bg: 28 32 48;           /* #1c2030 */
+  --c-card: 37 42 61;         /* #252a3d */
+  --c-border: 46 53 85;       /* #2e3555 */
+  --c-primary: 96 165 250;    /* #60a5fa */
+  --c-success: 74 222 128;    /* #4ade80 */
+  --c-warning: 251 191 36;    /* #fbbf24 */
+  --c-danger: 248 113 113;    /* #f87171 */
+  --c-purple: 167 139 250;    /* #a78bfa */
+  --c-muted: 107 114 128;     /* #6b7280 */
+  --c-slate-100: 241 245 249;
+  --c-slate-200: 226 232 240;
+  --c-slate-300: 203 213 225;
+  --c-slate-400: 148 163 184;
+  --c-slate-500: 100 116 139;
+  --c-slate-600: 71 85 105;
+  --c-slate-700: 51 65 85;
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
 }
 
 body {
-  background-color: #1c2030;
-  color: #e2e8f0;
+  background-color: rgb(var(--c-bg));
+  color: rgb(var(--c-slate-200));
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   margin: 0;
 }
@@ -18,14 +62,14 @@ body {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #1c2030;
+  background: rgb(var(--c-bg));
 }
 ::-webkit-scrollbar-thumb {
-  background: #2e3555;
+  background: rgb(var(--c-border));
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #60a5fa;
+  background: rgb(var(--c-primary));
 }
 
 .rtl { direction: rtl; }

@@ -95,6 +95,7 @@ PRICING ENGINE/
         ├── PlanDetail.jsx      # cost builder, per-cycle pricing, calc analysis, billing cycles
         ├── Categories.jsx      # manage component & plan categories
         ├── Simulator.jsx       # FX & inflation what-if + bulk re-price (filter + sort)
+        ├── Reports.jsx         # management report: pick plans, report FX rate, PDF/CSV
         ├── ActivityLog.jsx     # history of every change
         └── Settings.jsx        # dual FX rates, buffer, inflation, targets, backup/restore, reset
 ```
@@ -111,6 +112,7 @@ PRICING ENGINE/
 | `/plans` | Service Plans (list view is default) |
 | `/plans/:id` | Plan Detail |
 | `/simulator` | FX & Inflation Simulator |
+| `/reports` | Management Reports |
 | `/categories` | Categories |
 | `/activity` | Activity Log |
 | `/settings` | Master Settings |
@@ -121,13 +123,18 @@ PRICING ENGINE/
 
 - **settings**: `{ id, key, value, label, updated_at }` — keys below.
 - **components** (cost components): `{ id, name, category, billing_cycle('monthly'|'yearly'|'one_time'), cost_amount, currency('USD'|'EUR'|'LYD'), vendor, notes, is_active, inflation_indexed, cost_base_date?, amortize_months?(one_time, default 24), created_at }`
-- **plans** (service plans): `{ id, name, category, description, specs(jsonb), markup_override_pct|null, current_price?(legacy monthly), current_prices{ [cycleKey]: number }, billing_cycles[], status('draft'|'active'|'archived'), created_at }`
+- **plans** (service plans): `{ id, name, category, description, specs(jsonb), markup_override_pct|null, current_price?(legacy monthly), current_prices{ [cycleKey]: number }, current_prices_fx?{ USD|EUR: { [cycleKey]: number } }, billing_cycles[], status('draft'|'active'|'archived'), created_at }`
 - **allocations** (direct plan↔component): `{ id, plan_id, component_id, allocation_weight(0–1), allocation_notes, created_at }`
 - **costCenters**: `{ id, name, category, description, created_at }`
 - **costCenterComponents**: `{ id, cost_center_id, component_id, is_dedicated, dedicated_plan_id|null, created_at }`
 - **costCenterPlans**: `{ id, cost_center_id, plan_id, max_clients, actual_clients, created_at }`
 - **componentCategories / planCategories**: `{ id, key, label, color }` (color ∈ palette, see §9)
 - **activityLog**: `{ id, at, action, entity, name, details }`
+- **planHistory**: `{ id, at, planId, kind('price'|'cost'|'capacity'|'rate'|'setting'|'plan'), title, changes[{label,from,to}],
+  cost{from,to}, suggested{from,to}, mergeKey }` — per-plan change log (capped 5000). Every mutation that can affect a
+  plan takes `_planSnap()` first and calls `_recordPlanImpact(before, {...})` after: an entry is written for each plan
+  named in `planIds` **or** whose monthly cost/client or suggested price moved. Keystroke edits merge via `mergeKey`
+  (same field, < 2 min). **New mutations that affect cost or price must do the same.** Shown by `components/PlanHistory.jsx`.
 - **rateHistory**: `{ id, at, key, from, to }` — auto-recorded on every FX rate / `fx_mode` / `fx_buffer_pct` change
   (capped at 500, shown in Settings as a table + step chart; no-op saves are skipped).
 
@@ -155,12 +162,30 @@ Each plan stores which cycles it's sold in (`billing_cycles`) and a **separate m
    - **Shared** components are split by **capacity weight** = `plan.max_clients / Σ max_clients`.
    - **Dedicated** components go **100%** to one plan.
    - Occupancy = `actual_clients / max_clients`; `costPerActualClient = totalLYD / actual_clients`.
+   - Per-client cost = `totalLYD ÷ max_clients` (full capacity). A "planned occupancy %" basis was tried
+     and **removed at the user's request (2026-11-15)** — don't reintroduce it unasked.
+   - **Idle-capacity cost** = `totalLYD − perClientCapacity × actual_clients` (≥ 0): cost of unsold slots.
 4. **Plan total break-even** (`getPlanTotalCost`) = Σ direct allocations (`monthlyCost × allocation_weight`)
-   + Σ cost-center contributions. Result is a **monthly** figure.
+   + Σ cost-center contributions. Result is a **monthly** figure. `unitLYD` = per client (÷ capacity) for shared plans,
+   else whole-plan. `isCosted = totalLYD > 0` — an **uncosted** plan never shows a margin (no fake 100%).
 5. **Selling price** = `breakEven × (1 + markup/100)`, where `markup = plan.markup_override_pct ?? default_markup_pct`.
-6. **Margin %** = `(price − cost) / price × 100`.
+6. **Margin %** = `(price − cost) / price × 100`. Margin of a manual price: `planCycleMargin(plan, cycleKey)`
+   (null when uncosted or unpriced). Dashboard alerts check **every cycle sold** and flag uncosted plans.
 7. **Per cycle**: multiply monthly figures by `cycle.months`. The manual price for a cycle is
    `current_prices[cycleKey]` (falls back to monthly × months for display).
+   Show cycles via `sortCycles()` (standard order) and open plans on `defaultCycle()` (monthly → annually → shortest).
+8. **USD / EUR selling prices** (`SELL_CURRENCIES` in `mockData.js`): optional manual prices per cycle in
+   `plan.current_prices_fx`. LYD figures convert with `fromLYD(lyd, cur)` = `lyd ÷ fxRate(cur)` (the costing rate,
+   **no buffer**: it's already in the cost); a USD/EUR price's margin uses `priceToLYD`. Read with
+   `planCyclePriceIn(plan, cycle, cur)` / `planCycleMarginIn(...)`; `planPriceMargins(plan)` lists all, for alerts.
+9. **Showing the working**: `componentCostSteps(comp)` returns vendor amount, FX rate, buffer, cycle divisor and
+   inflation; `components/CostFormula.jsx` renders it ("$250 / mo × 11.000 × 1.05 buffer = 2887.500 LYD / mo")
+   in Plan Detail and the printed report.
+
+**Report-rate costing**: `getPlanTotalCost(planId, rates?)` / `getCostCenterPlanCost(cc, plan, rates?)` accept
+optional `{ USD, EUR }` to cost at those rates without touching settings. `buildPlanReport({ planIds, rates,
+cycleMode, currency })` builds the management report (rows, flags ok/below/loss/no-price/uncosted, summary);
+`components/ManagementReport.jsx` renders it (preview + print), `pages/Reports.jsx` holds the controls.
 
 The **FX Simulator** (`Simulator.jsx`) recomputes break-even at hypothetical USD/EUR rates **without**
 mutating the store, flags plans below `target_margin_pct` or going negative, and can **apply** the rates
@@ -196,18 +221,22 @@ It is pinned to **5173**. Changing it moves the storage origin and the user's da
 
 ## 9. UI / theme conventions
 
-Dark premium theme (defined in `tailwind.config.js`):
+**Bright theme by default**, with a **Dark mode** toggle in the sidebar (`theme` in the store, persisted).
+Colors are CSS variables in `src/index.css` (`:root` = bright, `:root.dark` = dark) wired into
+`tailwind.config.js`, so classes like `bg-card`, `text-primary`, `bg-primary/10` work in both themes.
+`slate-100…700` are remapped too: **slate-100 = strongest text, slate-700 = faintest**, in both themes.
+Charts/toasts can't use classes — take hex colors from `useThemeHex()` in `src/utils/theme.js` (keep in sync).
 
-| Token | Hex | Use |
-|---|---|---|
-| `bg` | `#1c2030` | page background |
-| `card` | `#252a3d` | cards / panels |
-| `border` | `#2e3555` | borders / dividers |
-| `primary` | `#60a5fa` | blue accent / actions |
-| `success` | `#4ade80` | green / prices / good margin |
-| `warning` | `#fbbf24` | gold / break-even / caution |
-| `danger` | `#f87171` | red / loss / destructive |
-| `purple` | `#a78bfa` | purple accent / dedicated costs |
+| Token | Bright | Dark | Use |
+|---|---|---|---|
+| `bg` | `#f4f7fc` | `#1c2030` | page background |
+| `card` | `#ffffff` | `#252a3d` | cards / panels |
+| `border` | `#dfe5ef` | `#2e3555` | borders / dividers |
+| `primary` | `#2563eb` | `#60a5fa` | blue accent / actions |
+| `success` | `#16a34a` | `#4ade80` | green / prices / good margin |
+| `warning` | `#d97706` | `#fbbf24` | amber / break-even / caution |
+| `danger` | `#dc2626` | `#f87171` | red / loss / destructive |
+| `purple` | `#7c3aed` | `#a78bfa` | purple accent / dedicated costs |
 
 Category colors are dynamic: each category stores a palette token (`primary|warning|success|purple|danger|muted`);
 resolve classes with `colorClass(token)` from `utils/format.js`.
@@ -260,6 +289,13 @@ Other conventions:
 - [x] **Backup & Restore** (export/import JSON) + reset-to-demo.
 - [x] **One-time cost amortization** (÷ `amortize_months`, default 24) across all calcs incl. simulator.
 - [x] **Exchange rate history**: every rate/mode/buffer change recorded; Settings table + step chart.
+- [x] **Plan history**: per-plan log of price, vendor-cost, capacity, allocation, FX/setting and plan-detail changes
+      with before → after and the impact on cost per client and suggested price (Plan Detail → History).
+- [x] **Guided tour** (`components/Tour.jsx`): 14 steps — exchange rate → 2 cost components → plan → allocate →
+      prices → report. Spotlights elements marked `data-tour="…"` (keep those attributes when editing pages);
+      auto-opens once (`tourSeen`, persisted), reopen from **Guided tour** in the sidebar; Skip/Esc anytime. Never changes data.
+- [x] **Management reports**: all / by category / selected plans, report-specific exchange rate printed on the
+      report, cycle + currency (LYD/USD/EUR) options, note, key points, Print/PDF + CSV.
 
 ### Possible next steps (not yet built)
 - Per-plan / per-cost-center **P&L** (costed vs. actual subscriber revenue).

@@ -139,6 +139,23 @@ export const BILLING_CYCLES = [
 export const getCycle = (key) =>
   BILLING_CYCLES.find(c => c.key === key) || BILLING_CYCLES[0]
 
+// Foreign currencies a plan can carry its own manual selling prices in (besides LYD)
+export const SELL_CURRENCIES = ['USD', 'EUR']
+
+// A plan's cycles in standard order (monthly → triennially), whatever order they were ticked in.
+export const sortCycles = (keys) => {
+  const list = keys?.length ? keys : ['monthly']
+  return BILLING_CYCLES.filter(c => list.includes(c.key)).map(c => c.key)
+}
+
+// Cycle a plan opens in: monthly if sold, else annually if sold, else its shortest cycle.
+export const defaultCycle = (keys) => {
+  const s = sortCycles(keys)
+  if (s.includes('monthly')) return 'monthly'
+  if (s.includes('annually')) return 'annually'
+  return s[0] || 'monthly'
+}
+
 // ── Editable category catalogs ────────────────────────────────────────
 export const initialComponentCategories = [
   { id: uid(), key: 'license', label: 'License', color: 'primary' },

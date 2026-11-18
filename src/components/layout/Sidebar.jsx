@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Settings, Package, Server, BarChart3, Globe, ShieldCheck, Layers, History, Tag, Sliders } from 'lucide-react'
+import { LayoutDashboard, Settings, Package, Server, BarChart3, Globe, ShieldCheck, Layers, History, Tag, Sliders, Sun, Moon, FileBarChart, Compass } from 'lucide-react'
 import useAppStore from '../../store/appStore'
 import clsx from 'clsx'
 
@@ -9,13 +9,14 @@ const nav = [
   { to: '/cost-centers', icon: Layers, label: 'Cost Centers', labelAr: 'مراكز التكلفة' },
   { to: '/plans', icon: Server, label: 'Service Plans', labelAr: 'خطط الخدمة' },
   { to: '/simulator', icon: Sliders, label: 'FX Simulator', labelAr: 'محاكي الصرف' },
+  { to: '/reports', icon: FileBarChart, label: 'Reports', labelAr: 'التقارير' },
   { to: '/categories', icon: Tag, label: 'Categories', labelAr: 'الفئات' },
   { to: '/activity', icon: History, label: 'Activity Log', labelAr: 'سجل النشاط' },
   { to: '/settings', icon: Settings, label: 'Settings', labelAr: 'الإعدادات' },
 ]
 
 export default function Sidebar() {
-  const { lang, toggleLang } = useAppStore()
+  const { lang, toggleLang, theme, toggleTheme, startTour } = useAppStore()
   const isAr = lang === 'ar'
 
   return (
@@ -55,8 +56,22 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* Lang toggle */}
-      <div className="px-4 py-4 border-t border-border">
+      {/* Theme + lang toggles */}
+      <div className="px-4 py-4 border-t border-border space-y-2">
+        <button
+          onClick={startTour}
+          className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium text-primary bg-primary/10 hover:bg-primary/15 transition-colors border border-primary/30"
+        >
+          <span>{isAr ? 'جولة إرشادية' : 'Guided tour'}</span>
+          <Compass size={14} />
+        </button>
+        <button
+          onClick={toggleTheme}
+          className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs text-slate-400 hover:bg-border/50 transition-colors border border-border"
+        >
+          <span>{theme === 'dark' ? (isAr ? 'الوضع الفاتح' : 'Bright mode') : (isAr ? 'الوضع الداكن' : 'Dark mode')}</span>
+          {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+        </button>
         <button
           onClick={toggleLang}
           className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs text-slate-400 hover:bg-border/50 transition-colors border border-border"

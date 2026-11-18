@@ -9,6 +9,7 @@ import PlanDetail from './pages/PlanDetail'
 import ActivityLog from './pages/ActivityLog'
 import Categories from './pages/Categories'
 import Simulator from './pages/Simulator'
+import Reports from './pages/Reports'
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/plans/:id" element={<PlanDetail />} />
           <Route path="/categories" element={<Categories />} />
           <Route path="/simulator" element={<Simulator />} />
+          <Route path="/reports" element={<Reports />} />
           <Route path="/activity" element={<ActivityLog />} />
           <Route path="/settings" element={<Settings />} />
         </Route>

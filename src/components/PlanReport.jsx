@@ -2,12 +2,13 @@ import useAppStore from '../store/appStore'
 import {
   fmtLYD, fmtCurrency, fmtPct, sellingPrice, marginPct, planCyclePrice,
 } from '../utils/format'
-import { BILLING_CYCLES, getCycle } from '../data/mockData'
+import { BILLING_CYCLES, getCycle, sortCycles, defaultCycle, SELL_CURRENCIES } from '../data/mockData'
 
 // A clean, light-themed, print-optimized one-page cost report for a single plan.
 export default function PlanReport({ planId }) {
   const {
-    plans, getPlanTotalCost, getSetting, getSettingRaw, getPlanCat, getComponentCat,
+    plans, getPlanTotalCost, getSetting, getSettingRaw, getPlanCat, getComponentCat, componentCostSteps,
+    fxRate, fromLYD, planCyclePriceIn, planCycleMarginIn,
   } = useAppStore()
 
   const plan = plans.find(p => p.id === planId)
@@ -15,6 +16,7 @@ export default function PlanReport({ planId }) {
 
   const {
     totalLYD, unitLYD, clientCapacity, clientActual, perClientCapacity, perClientActual,
+    idleCostLYD, isCosted,
     isPerClient, directBreakdown, directTotal, ccContributions, ccTotal,
   } = getPlanTotalCost(planId)
 
@@ -29,7 +31,8 @@ export default function PlanReport({ planId }) {
   const buffer = getSetting('fx_buffer_pct')
   const inflation = getSetting('monthly_inflation_pct')
 
-  const cycles = (plan.billing_cycles?.length ? plan.billing_cycles : ['monthly'])
+  const cycles = sortCycles(plan.billing_cycles)
+  const mainCycle = defaultCycle(cycles)
 
   const generatedAt = new Date().toLocaleString()
 
@@ -47,6 +50,21 @@ export default function PlanReport({ planId }) {
       {sub && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>{sub}</div>}
     </div>
   )
+
+  // Vendor cost in its own currency, and the FX working that turns it into LYD
+  const billSuffix = { monthly: '/mo', yearly: '/yr', one_time: ' once' }
+  const VendorCells = ({ c }) => {
+    const st = componentCostSteps(c)
+    return (
+      <>
+        <td style={tdR}>{fmtCurrency(st.amount, st.currency)}{billSuffix[st.billing] || ''}</td>
+        <td style={{ ...tdR, color: '#64748b' }}>
+          {st.isForeign ? <>× {st.rate.toFixed(3)}{st.bufferPct ? <div style={{ fontSize: 10.5 }}>+{st.bufferPct}% buffer</div> : null}</> : '—'}
+          {st.divisor !== 1 && <div style={{ fontSize: 10.5 }}>÷ {st.divisor} mo</div>}
+        </td>
+      </>
+    )
+  }
 
   return (
     <div id="print-area">
@@ -90,11 +108,11 @@ export default function PlanReport({ planId }) {
           {isPerClient
             ? <Summary label="Clients (capacity / now)" value={`${clientCapacity} / ${clientActual}`} sub={clientCapacity ? `${fmtPct((clientActual / clientCapacity) * 100)} occupancy` : ''} />
             : <Summary label="Sold as" value="Single unit" sub="not per-client" />}
-          <Summary label={isPerClient ? 'Cost / Client (at capacity)' : 'Break-Even / month'} value={fmtLYD(unitLYD)} accent="#b45309"
-            sub={isPerClient && perClientActual != null ? `${fmtLYD(perClientActual)} at current fill` : ''} />
+          <Summary label={isPerClient ? 'Cost / Client (at capacity)' : 'Break-Even / month'} value={isCosted ? fmtLYD(unitLYD) : 'Uncosted'} accent={isCosted ? '#b45309' : '#b91c1c'}
+            sub={!isCosted ? 'no costs linked to this plan' : isPerClient && perClientActual != null ? `${fmtLYD(perClientActual)} at current fill` : ''} />
           <Summary label="Markup" value={fmtPct(markup)} />
           <Summary label="Suggested Price / Client (monthly)" value={fmtLYD(suggestedUnit)} accent="#15803d" />
-          <Summary label="Current Price (monthly)" value={planCyclePrice(plan, 'monthly') != null ? fmtLYD(planCyclePrice(plan, 'monthly')) : '—'} accent="#1d4ed8" />
+          <Summary label={`Current Price (${getCycle(mainCycle).label})`} value={planCyclePrice(plan, mainCycle) != null ? fmtLYD(planCyclePrice(plan, mainCycle)) : '—'} accent="#1d4ed8" />
         </div>
 
         {/* Cost Allocation */}
@@ -106,22 +124,22 @@ export default function PlanReport({ planId }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', ...box, overflow: 'hidden' }}>
               <thead>
                 <tr>
-                  <th style={th}>Component</th><th style={th}>Category</th>
-                  <th style={thR}>Cost / mo</th><th style={thR}>Weight</th><th style={thR}>Allocated</th>
+                  <th style={th}>Component</th><th style={thR}>Vendor Cost</th><th style={thR}>FX Rate</th>
+                  <th style={thR}>Cost / mo (LYD)</th><th style={thR}>Weight</th><th style={thR}>Allocated</th>
                 </tr>
               </thead>
               <tbody>
                 {directBreakdown.map(({ component: c, alloc, monthlyCostLYD, allocatedLYD }) => (
                   <tr key={alloc.id}>
-                    <td style={td}>{c.name}</td>
-                    <td style={td}>{compCatLabel(c.category)}</td>
+                    <td style={td}>{c.name}<div style={{ fontSize: 10.5, color: '#94a3b8' }}>{compCatLabel(c.category)}</div></td>
+                    <VendorCells c={c} />
                     <td style={tdR}>{fmtLYD(monthlyCostLYD)}</td>
                     <td style={tdR}>{fmtPct((alloc.allocation_weight || 0) * 100)}</td>
                     <td style={{ ...tdR, fontWeight: 600 }}>{fmtLYD(allocatedLYD)}</td>
                   </tr>
                 ))}
                 <tr>
-                  <td style={{ ...td, fontWeight: 700 }} colSpan={4}>Direct subtotal</td>
+                  <td style={{ ...td, fontWeight: 700 }} colSpan={5}>Direct subtotal</td>
                   <td style={{ ...tdR, fontWeight: 700, color: '#b45309' }}>{fmtLYD(directTotal)}</td>
                 </tr>
               </tbody>
@@ -141,22 +159,22 @@ export default function PlanReport({ planId }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', ...box, overflow: 'hidden' }}>
               <thead>
                 <tr>
-                  <th style={th}>Component</th><th style={th}>Type</th>
-                  <th style={thR}>Pool Cost / mo</th><th style={thR}>Basis</th><th style={thR}>Allocated</th>
+                  <th style={th}>Component</th><th style={thR}>Vendor Cost</th><th style={thR}>FX Rate</th>
+                  <th style={thR}>Pool Cost / mo (LYD)</th><th style={thR}>Share</th><th style={thR}>Allocated</th>
                 </tr>
               </thead>
               <tbody>
                 {breakdown.map(({ component: c, type, monthlyCostLYD, allocatedLYD, weight: w }) => (
                   <tr key={c.id}>
-                    <td style={td}>{c.name}</td>
-                    <td style={td}>{type === 'dedicated' ? 'Dedicated' : 'Shared'}</td>
+                    <td style={td}>{c.name}<div style={{ fontSize: 10.5, color: '#94a3b8' }}>{type === 'dedicated' ? 'Dedicated' : 'Shared'}</div></td>
+                    <VendorCells c={c} />
                     <td style={tdR}>{fmtLYD(monthlyCostLYD)}</td>
                     <td style={tdR}>{type === 'dedicated' ? '100%' : fmtPct(w * 100)}</td>
                     <td style={{ ...tdR, fontWeight: 600 }}>{fmtLYD(allocatedLYD)}</td>
                   </tr>
                 ))}
                 <tr>
-                  <td style={{ ...td, fontWeight: 700 }} colSpan={4}>
+                  <td style={{ ...td, fontWeight: 700 }} colSpan={5}>
                     Subtotal (shared {fmtLYD(sharedTotal)} · dedicated {fmtLYD(dedicatedTotal)})
                   </td>
                   <td style={{ ...tdR, fontWeight: 700, color: '#b45309' }}>{fmtLYD(ccPlanTotal)}</td>
@@ -200,7 +218,7 @@ export default function PlanReport({ planId }) {
               const be = unitLYD * cyc.months
               const suggested = suggestedUnit * cyc.months
               const current = planCyclePrice(plan, key)
-              const margin = current != null ? marginPct(be, current) : marginPct(be, suggested)
+              const margin = !isCosted ? null : current != null ? marginPct(be, current) : marginPct(be, suggested)
               return (
                 <tr key={key}>
                   <td style={{ ...td, fontWeight: 600 }}>{cyc.label}</td>
@@ -208,9 +226,47 @@ export default function PlanReport({ planId }) {
                   <td style={tdR}>{fmtLYD(be)}</td>
                   <td style={{ ...tdR, color: '#15803d' }}>{fmtLYD(suggested)}</td>
                   <td style={{ ...tdR, color: '#1d4ed8', fontWeight: 600 }}>{current != null ? fmtLYD(current) : '—'}</td>
-                  <td style={{ ...tdR, color: margin < 0 ? '#b91c1c' : margin < 15 ? '#b45309' : '#15803d', fontWeight: 600 }}>{fmtPct(margin)}</td>
+                  <td style={{ ...tdR, color: margin == null || margin < 0 ? '#b91c1c' : margin < 15 ? '#b45309' : '#15803d', fontWeight: 600 }}>{margin == null ? 'Uncosted' : fmtPct(margin)}</td>
                 </tr>
               )
+            })}
+          </tbody>
+        </table>
+
+        {/* Foreign-currency prices */}
+        <div style={{ fontSize: 13, fontWeight: 700, margin: '0 0 8px' }}>
+          Prices in {SELL_CURRENCIES.join(' / ')}
+          <span style={{ fontWeight: 400, fontSize: 11, color: '#94a3b8' }}>
+            {'  '}converted at the costing rate ({SELL_CURRENCIES.map(c => `${c} ${fxRate(c).toFixed(3)}`).join(', ')})
+          </span>
+        </div>
+        <table className="pr-avoid-break" style={{ width: '100%', borderCollapse: 'collapse', ...box, overflow: 'hidden', marginBottom: 20 }}>
+          <thead>
+            <tr>
+              <th style={th}>Billing Cycle</th><th style={th}>Currency</th>
+              <th style={thR}>Break-Even</th><th style={thR}>Suggested</th>
+              <th style={thR}>Your Price</th><th style={thR}>Margin</th>
+            </tr>
+          </thead>
+          <tbody>
+            {cycles.flatMap(key => {
+              const cyc = getCycle(key)
+              return SELL_CURRENCIES.map(c => {
+                const own = planCyclePriceIn(plan, key, c)
+                const m = planCycleMarginIn(plan, key, c)
+                return (
+                  <tr key={key + c}>
+                    <td style={{ ...td, fontWeight: 600 }}>{cyc.label}</td>
+                    <td style={td}>{c}</td>
+                    <td style={tdR}>{fmtCurrency(fromLYD(unitLYD * cyc.months, c), c)}</td>
+                    <td style={{ ...tdR, color: '#15803d' }}>{fmtCurrency(fromLYD(suggestedUnit * cyc.months, c), c)}</td>
+                    <td style={{ ...tdR, color: '#1d4ed8', fontWeight: 600 }}>{own != null ? fmtCurrency(own, c) : '—'}</td>
+                    <td style={{ ...tdR, color: m == null ? '#94a3b8' : m < 0 ? '#b91c1c' : m < 15 ? '#b45309' : '#15803d', fontWeight: 600 }}>
+                      {!isCosted ? 'Uncosted' : m == null ? '—' : fmtPct(m)}
+                    </td>
+                  </tr>
+                )
+              })
             })}
           </tbody>
         </table>
@@ -221,7 +277,7 @@ export default function PlanReport({ planId }) {
           (USD {usdRate.toFixed(3)}, EUR {eurRate.toFixed(3)}) with a {fmtPct(buffer)} FX risk buffer.
           Monthly inflation on indexed costs: {fmtPct(inflation)}.
           {isPerClient
-            ? ' Per-client figures use server capacity; actual cost-per-client is higher until the server fills.'
+            ? ` Per-client figures use full client capacity.${idleCostLYD > 0 ? ` Idle-capacity cost not covered by today's clients: ${fmtLYD(idleCostLYD)} / mo.` : ''}`
             : ' This plan is priced as a single unit (no client capacity defined).'}
           {' '}Margin = (price − cost) ÷ price. Figures are management estimates, not a quote.
           <div style={{ marginTop: 4, color: '#94a3b8' }}>Confidential — Libyan Spider internal use.</div>

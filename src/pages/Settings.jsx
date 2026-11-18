@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import useAppStore from '../store/appStore'
+import { useThemeHex, tooltipStyle } from '../utils/theme'
 import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import Input, { Select } from '../components/ui/Input'
@@ -21,11 +22,12 @@ const RATE_LABELS = {
   fx_buffer_pct: 'FX buffer %',
 }
 const RATE_CHART_KEYS = ['usd_to_lyd', 'eur_to_lyd', 'usd_to_lyd_parallel', 'eur_to_lyd_parallel']
+// theme token per rate line (hex resolved per theme in the component)
 const RATE_COLORS = {
-  usd_to_lyd: '#4ade80',
-  eur_to_lyd: '#60a5fa',
-  usd_to_lyd_parallel: '#fbbf24',
-  eur_to_lyd_parallel: '#a78bfa',
+  usd_to_lyd: 'success',
+  eur_to_lyd: 'primary',
+  usd_to_lyd_parallel: 'warning',
+  eur_to_lyd_parallel: 'purple',
 }
 
 const NUM_FIELDS = [
@@ -35,6 +37,7 @@ const NUM_FIELDS = [
 
 export default function Settings() {
   const { settings, updateSetting, resetData, getSettingRaw, exportData, importData, rateHistory, cloudStatus, cloudLastSync, cloudError } = useAppStore()
+  const t = useThemeHex()
 
   // chart data: one point per recorded rate change, oldest → newest
   const chartData = [...(rateHistory || [])]
@@ -119,7 +122,7 @@ export default function Settings() {
             <Input label="USD → LYD" type="number" step="0.001" min="0" value={vals.usd_to_lyd} onChange={e => set('usd_to_lyd', e.target.value)} />
             <Input label="EUR → LYD" type="number" step="0.001" min="0" value={vals.eur_to_lyd} onChange={e => set('eur_to_lyd', e.target.value)} />
           </div>
-          <div className="space-y-4">
+          <div className="space-y-4" data-tour="fx-parallel">
             <p className="text-xs font-semibold text-warning uppercase tracking-wide">Parallel (Market)</p>
             <Input label="USD → LYD" type="number" step="0.001" min="0" value={vals.usd_to_lyd_parallel} onChange={e => set('usd_to_lyd_parallel', e.target.value)} />
             <Input label="EUR → LYD" type="number" step="0.001" min="0" value={vals.eur_to_lyd_parallel} onChange={e => set('eur_to_lyd_parallel', e.target.value)} />
@@ -131,7 +134,7 @@ export default function Settings() {
           <span className="text-slate-500">EUR spread: <span className="font-mono text-warning">{eurSpread.toFixed(1)}%</span></span>
         </div>
 
-        <div className="bg-bg rounded-xl p-4 flex items-center justify-between">
+        <div className="bg-bg rounded-xl p-4 flex items-center justify-between" data-tour="fx-mode">
           <div>
             <p className="text-xs font-medium text-slate-300">Rate used for costing</p>
             <p className="text-xs text-slate-500">Which rate drives all break-even calculations.</p>
@@ -155,13 +158,13 @@ export default function Settings() {
         {chartData.length >= 2 && (
           <ResponsiveContainer width="100%" height={180}>
             <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2e3555" />
-              <XAxis dataKey="at" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-              <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} domain={['auto', 'auto']} />
-              <Tooltip contentStyle={{ background: '#252a3d', border: '1px solid #2e3555', borderRadius: 8, fontSize: 12 }} />
-              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, color: '#94a3b8' }} />
+              <CartesianGrid strokeDasharray="3 3" stroke={t.border} />
+              <XAxis dataKey="at" tick={{ fill: t.axis, fontSize: 11 }} />
+              <YAxis tick={{ fill: t.axis, fontSize: 11 }} domain={['auto', 'auto']} />
+              <Tooltip contentStyle={tooltipStyle(t)} />
+              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, color: t.axis }} />
               {RATE_CHART_KEYS.map(k => (
-                <Line key={k} type="stepAfter" dataKey={k} name={RATE_LABELS[k]} stroke={RATE_COLORS[k]} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                <Line key={k} type="stepAfter" dataKey={k} name={RATE_LABELS[k]} stroke={t[RATE_COLORS[k]]} strokeWidth={2} dot={{ r: 3 }} connectNulls />
               ))}
             </LineChart>
           </ResponsiveContainer>
@@ -240,10 +243,11 @@ export default function Settings() {
         <p className="text-xs text-slate-500">
           Selling price = Break-Even × (1 + Markup%). Plans below the target margin are flagged on the Dashboard.
         </p>
+
       </Card>
 
       <div className="flex justify-end">
-        <Button variant="primary" onClick={save}>
+        <Button variant="primary" onClick={save} data-tour="settings-save">
           <Save size={15} /> Save Settings
         </Button>
       </div>

@@ -180,7 +180,7 @@ function CalcBreakdownCard({ ccId }) {
                       {result.actualClients}/{cp.max_clients} · {fmtPct(result.occupancy * 100)}
                     </Badge>
                   </div>
-                  <div className="grid grid-cols-4 gap-2 text-xs">
+                  <div className="grid grid-cols-5 gap-2 text-xs">
                     <div>
                       <p className="text-slate-500">Weight</p>
                       <p className="font-mono text-primary">{fmtPct(result.weight * 100)}</p>
@@ -192,6 +192,10 @@ function CalcBreakdownCard({ ccId }) {
                     <div>
                       <p className="text-slate-500">Cost/client (cap.)</p>
                       <p className="font-mono text-slate-300">{fmtLYD(result.costPerCapacityClient)}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500" title="Monthly cost of unsold slots — not covered by today's clients">Idle cost</p>
+                      <p className="font-mono text-danger">{fmtLYD(result.idleCostLYD)}</p>
                     </div>
                     <div>
                       <p className="text-slate-500">Cost/client (now)</p>
